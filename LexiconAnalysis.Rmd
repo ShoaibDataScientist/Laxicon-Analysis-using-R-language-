@@ -1,0 +1,278 @@
+---
+title: "LexiconAnalysis"
+output:
+  html_document: default
+  pdf_document: default
+---
+Load Libraries
+```{r}
+# Load
+library("tm")
+library("SnowballC")
+library("wordcloud")
+library("RColorBrewer")
+library("syuzhet")
+library("ggplot2")
+```
+
+Add data
+```{r}
+data <- read.csv("air_tweets.csv", comment.char="#")
+View(data)
+```
+Dimension OF the Data
+```{r}
+dim(data)
+```
+Column Representation
+```{r}
+names(data)
+```
+import library
+```{r}
+library(dplyr)
+```
+
+Selection of Limited Columns:
+```{r}
+reducedData <- select(data, user_id,created_at,text)
+```
+```{r}
+names(reducedData)
+```
+```{r}
+View(reducedData)
+```
+
+# Load the data as a corpus
+```{r}
+TextDoc <- Corpus(VectorSource(reducedData$text))
+```
+Data Cleaning
+```{r}
+#Replacing "/", "@" and "|" with space
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+TextDoc <- tm_map(TextDoc, toSpace, "/")
+TextDoc <- tm_map(TextDoc, toSpace, "@")
+TextDoc <- tm_map(TextDoc, toSpace, "\\|")
+# Convert the text to lower case
+TextDoc <- tm_map(TextDoc, content_transformer(tolower))
+# Remove numbers
+TextDoc <- tm_map(TextDoc, removeNumbers)
+# Remove english common stopwords
+TextDoc <- tm_map(TextDoc, removeWords, stopwords("english"))
+# Remove your own stop word
+# specify your custom stopwords as a character vector
+TextDoc <- tm_map(TextDoc, removeWords, c("s", "company", "team")) 
+# Remove punctuations
+TextDoc <- tm_map(TextDoc, removePunctuation)
+# Eliminate extra white spaces
+TextDoc <- tm_map(TextDoc, stripWhitespace)
+# Text stemming - which reduces words to their root form
+TextDoc <- tm_map(TextDoc, stemDocument)
+```
+Building the term document matrix
+```{r}
+# Build a term-document matrix
+TextDoc_dtm <- TermDocumentMatrix(TextDoc)
+dtm_m <- as.matrix(TextDoc_dtm)
+# Sort by descearing value of frequency
+dtm_v <- sort(rowSums(dtm_m),decreasing=TRUE)
+dtm_d <- data.frame(word = names(dtm_v),freq=dtm_v)
+# Display the top 5 most frequent words
+head(dtm_d, 5)
+```
+Top 5 words
+```{r}
+# Plot the most frequent words
+barplot(dtm_d[1:5,]$freq, las = 2, names.arg = dtm_d[1:5,]$word,
+        col ="lightgreen", main ="Top 5 most frequent words",
+        ylab = "Word frequencies")
+```
+word Cloud
+```{r}
+#generate word cloud
+set.seed(1234)
+wordcloud(words = dtm_d$word, freq = dtm_d$freq, min.freq = 5,
+          max.words=100, random.order=FALSE, rot.per=0.40, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+```{r}
+# Clean reducedData
+removeUsername <- gsub('@[^[:space:]]*', '', reducedData$text)
+reducedData$text <- gsub("/", " ", reducedData$text)
+reducedData$text <- gsub("@", " ", reducedData$text)
+reducedData$text <- gsub("\\|", " ", reducedData$text)
+reducedData$text <- tolower(reducedData$text)
+```
+
+
+Sentiment Score
+```{r}
+# regular sentiment score using get_sentiment() function and method of your choice
+# please note that different methods may have different scales
+syuzhet_vector <- get_sentiment(reducedData$text, method="syuzhet")
+# see the first row of the vector
+head(syuzhet_vector)
+# see summary statistics of the vector
+summary(syuzhet_vector)
+```
+```{r}
+# bing
+bing_vector <- get_sentiment(reducedData$text, method="bing")
+head(bing_vector)
+summary(bing_vector)
+#affin
+afinn_vector <- get_sentiment(reducedData$text, method="afinn")
+head(afinn_vector)
+summary(afinn_vector)
+```
+```{r}
+#compare the first row of each vector using sign function
+rbind(
+  sign(head(syuzhet_vector)),
+  sign(head(bing_vector)),
+  sign(head(afinn_vector))
+)
+```
+```{r}
+# run nrc sentiment analysis to return data frame with each row classified as one of the following
+# emotions, rather than a score: 
+# anger, anticipation, disgust, fear, joy, sadness, surprise, trust 
+# It also counts the number of positive and negative emotions found in each row
+d<-get_nrc_sentiment(reducedData$text)
+# head(d,10) - to see top 10 lines of the get_nrc_sentiment dataframe
+head (d,10)
+```
+
+```{r}
+#transpose
+td<-data.frame(t(d))
+#The function rowSums computes column sums across rows for each level of a grouping variable.
+td_new <- data.frame(rowSums(td[2:253]))
+#Transformation and cleaning
+names(td_new)[1] <- "count"
+td_new <- cbind("sentiment" = rownames(td_new), td_new)
+rownames(td_new) <- NULL
+td_new2<-td_new[1:8,]
+#Plot One - count of words associated with each sentiment
+quickplot(sentiment, data=td_new2, weight=count, geom="bar", fill=sentiment, ylab="count")+ggtitle("Survey sentiments")
+```
+
+```{r}
+#Plot two - count of words associated with each sentiment, expressed as a percentage
+barplot(
+  sort(colSums(prop.table(d[, 1:8]))), 
+  horiz = TRUE, 
+  cex.names = 0.7, 
+  las = 1, 
+  main = "Emotions in Text", xlab="Percentage"
+)
+```
+
+## Adding sentiment to the dataframe 
+
+```{r}
+reducedData_sentiment <- reducedData
+
+reducedData_sentiment$sentiment_afinn_numeric <- afinn_vector
+reducedData_sentiment$sentiment_bing_numeric <- bing_vector
+reducedData_sentiment$sentiment_syuzhet_numeric <- syuzhet_vector
+```
+
+```{r}
+# add labels for positive/negative/neutral
+reducedData_sentiment$sentiment_afinn_label <- ifelse(reducedData_sentiment$sentiment_afinn_numeric > 0, "positive", 
+                                                      ifelse(reducedData_sentiment$sentiment_afinn_numeric < 0, "negative", "neutral"))
+
+reducedData_sentiment$sentiment_bing_label <- ifelse(reducedData_sentiment$sentiment_bing_numeric > 0, "positive", 
+                                                      ifelse(reducedData_sentiment$sentiment_bing_numeric < 0, "negative", "neutral"))
+
+reducedData_sentiment$sentiment_syuzhet_label <- ifelse(reducedData_sentiment$sentiment_syuzhet_numeric > 0, "positive", 
+                                                      ifelse(reducedData_sentiment$sentiment_syuzhet_numeric < 0, "negative", "neutral"))
+```
+
+```{r}
+head(reducedData_sentiment)
+```
+
+```{r}
+# look at similarity between methods
+reducedData_sentiment$matching_sentiment_result <- reducedData_sentiment$sentiment_afinn_label == reducedData_sentiment$sentiment_bing_label & reducedData_sentiment$sentiment_bing_label == reducedData_sentiment$sentiment_syuzhet_label
+
+prop.table(table(reducedData_sentiment$matching_sentiment_result))
+# TRUE indicates that all the methods give the same result, FALSE means they give different results
+# from a manual look over the rows with FALSE, I would say the afinn method is most accurate
+```
+
+```{r}
+write.csv(reducedData_sentiment, 'sentiment_dataframe.csv', row.names = FALSE)
+```
+
+# SVM
+
+```{r}
+library(dplyr)
+library(rsample)
+library(recipes)
+library(textrecipes)
+library(parsnip)
+library(workflows)
+library(yardstick)
+```
+
+```{r}
+svm_data <- reducedData_sentiment %>% select(user_id, text, sentiment_afinn_label) %>% mutate(sentiment_afinn_label = as.factor(sentiment_afinn_label))
+```
+
+```{r}
+text_split <- initial_split(svm_data)
+training_set <- training(text_split)
+test_set <- testing(text_split)
+```
+
+```{r}
+text_recipe <- recipe(sentiment_afinn_label ~ ., data = training_set) %>% 
+  update_role(user_id, new_role = "ID") %>% 
+  step_tokenize(text, engine = "spacyr") %>% 
+  step_stopwords(text) %>%
+  step_lemma(text) %>%
+  step_tokenfilter(text, max_tokens = 100) %>%
+  step_tfidf(text)
+```
+
+```{r}
+text_model_svm_spec <- svm_poly("classification") %>% set_engine("kernlab")
+```
+
+```{r}
+text_model_svm_wf <- workflows::workflow() %>% add_recipe(text_recipe) %>% add_model(text_model_svm_spec)
+```
+
+```{r}
+fit_svm_model <- fit(text_model_svm_wf, training_set)
+```
+
+```{r}
+predictions_SVM <- predict(fit_svm_model, test_set)
+predictions_df <- cbind(test_set, predictions_SVM)
+```
+
+```{r}
+predictions_df %>% conf_mat(sentiment_afinn_label, .pred_class) 
+```
+
+```{r}
+predictions_df %>% accuracy(truth = sentiment_afinn_label, estimate = .pred_class)
+```
+
+```{r}
+all_predictions <- predict(fit_svm_model, svm_data)
+all_predictions <- cbind(reducedData_sentiment, all_predictions)
+all_predictions <- all_predictions %>% rename(svm_sentiment = .pred_class)
+```
+
+```{r}
+write.csv(all_predictions, 'sentiment_dataframe.csv', row.names = FALSE)
+```
